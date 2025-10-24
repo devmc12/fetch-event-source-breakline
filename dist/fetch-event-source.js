@@ -59,6 +59,7 @@ function getLines(onLine) {
     }
   };
 }
+var savedLine = null;
 function getMessages(onId, onRetry, onMessage) {
   let message = newMessage();
   const decoder = new TextDecoder();
@@ -66,10 +67,17 @@ function getMessages(onId, onRetry, onMessage) {
     if (line.length === 0) {
       onMessage?.(message);
       message = newMessage();
+      savedLine = null;
     } else if (fieldLength > 0) {
       const field = decoder.decode(line.subarray(0, fieldLength));
       const valueOffset = fieldLength + (line[fieldLength + 1] === 32 /* Space */ ? 2 : 1);
       const value = decoder.decode(line.subarray(valueOffset));
+      if (value.startsWith("{") && !value.endsWith("}")) {
+        savedLine = value;
+        onMessage?.(message);
+        message = newMessage();
+        return;
+      }
       switch (field) {
         case "data":
           message.data = message.data ? message.data + "\n" + value : value;
@@ -86,6 +94,13 @@ function getMessages(onId, onRetry, onMessage) {
             onRetry(message.retry = retry);
           }
           break;
+        default:
+          if (savedLine) {
+            message.data = (message.data ? message.data + "\n" : "") + savedLine + field + ":" + value;
+            savedLine = null;
+          } else {
+            savedLine = null;
+          }
       }
     }
   };

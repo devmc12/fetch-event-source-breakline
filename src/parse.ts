@@ -34,9 +34,9 @@ const enum ControlChars {
     Colon = 58,
 }
 
-/** 
+/**
  * Parses arbitary byte chunks into EventSource line buffers.
- * Each line should be of the format "field: value" and ends with \r, \n, or \r\n. 
+ * Each line should be of the format "field: value" and ends with \r, \n, or \r\n.
  * @param onLine A function that will be called on each new EventSource line.
  * @returns A function that should be called for each incoming byte chunk.
  */
@@ -64,10 +64,10 @@ export function getLines(onLine: (line: Uint8Array, fieldLength: number) => void
                 if (buffer[position] === ControlChars.NewLine) {
                     lineStart = ++position; // skip to next char
                 }
-                
+
                 discardTrailingNewline = false;
             }
-            
+
             // start looking forward till the end of line:
             let lineEnd = -1; // index of the \r or \n char
             for (; position < bufLength && lineEnd === -1; ++position) {
@@ -109,7 +109,10 @@ export function getLines(onLine: (line: Uint8Array, fieldLength: number) => void
     }
 }
 
-/** 
+// 上一条保存的行（处理data: xxxx \n bbbb 换行的情况）
+let savedLine: string | null = null;
+
+/**
  * Parses line buffers into EventSourceMessages.
  * @param onId A function that will be called on each `id` field.
  * @param onRetry A function that will be called on each `retry` field.
@@ -130,12 +133,21 @@ export function getMessages(
             // empty line denotes end of message. Trigger the callback and start a new message:
             onMessage?.(message);
             message = newMessage();
+            savedLine = null; // 清除保存的行
         } else if (fieldLength > 0) { // exclude comments and lines with no values
             // line is of format "<field>:<value>" or "<field>: <value>"
             // https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
             const field = decoder.decode(line.subarray(0, fieldLength));
             const valueOffset = fieldLength + (line[fieldLength + 1] === ControlChars.Space ? 2 : 1);
             const value = decoder.decode(line.subarray(valueOffset));
+
+            // 处理以 { 开头但不是 } 结尾的情况
+            if (value.startsWith("{") && !value.endsWith("}")) {
+                savedLine = value;
+                onMessage?.(message);
+                message = newMessage();
+                return;
+            }
 
             switch (field) {
                 case 'data':
@@ -157,6 +169,14 @@ export function getMessages(
                         onRetry(message.retry = retry);
                     }
                     break;
+                default:
+                    // 合并上一条保存的 value
+                    if (savedLine) {
+                        message.data = (message.data ? message.data + '\n' : '') + savedLine + field  + ":" + value;
+                        savedLine = null;
+                    } else {
+                        savedLine = null;
+                    }
             }
         }
     }
